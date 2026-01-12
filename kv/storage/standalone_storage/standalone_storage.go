@@ -1,6 +1,8 @@
 package standalone_storage
 
 import (
+	"errors"
+
 	"github.com/Connor1996/badger"
 	"github.com/pingcap-incubator/tinykv/kv/config"
 	"github.com/pingcap-incubator/tinykv/kv/storage"
@@ -15,24 +17,40 @@ type StandAloneStorage struct {
 	conf   *config.Config       // kv存储路径
 }
 
-// StandAloneReader is the reader implementation for StandAloneStorage
-type StandAloneReader struct {
-	txn *badger.Txn
-	kvdb *badger.DB
-}
-func (r *StandAloneReader)GetCF(cf string, key []byte) ([]byte, error) {
-	return engine_util.GetCF(r.kvdb,cf,key)
+type StandAloneStorageReader struct {
+	txn *badger.Txn // 用于读取数据的事务，由Reader方法传入
 }
 
-func (r *StandAloneReader) IterCF(cf string) engine_util.DBIterator {
+func (r *StandAloneStorageReader)GetCF(cf string, key []byte) ([]byte, error) {
+	if r.txn ==nil {
+		return nil, errors.New("transaction is nil")
+	}
+	val, err := engine_util.GetCFFromTxn(r.txn, cf, key)
+	if err != nil {
+		// 如果key不存在，返回nil
+		if err == badger.ErrKeyNotFound {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return val, nil
+}
+
+// CF迭代器
+func (r *StandAloneStorageReader) IterCF(cf string) engine_util.DBIterator {
+	if r.txn == nil {
+		return nil
+	}
 	
-	return nil
+	iter := engine_util.NewCFIterator(cf, r.txn)
+	return iter
 }
 
 // Close就是把当前的事务提交
-func (r *StandAloneReader) Close() {
+func (r *StandAloneStorageReader) Close() {
 	if r.txn != nil {
-		r.txn.Commit()
+		r.txn.Discard() // 只读事务必须discard
+		r.txn = nil
 	}
 }
 
@@ -61,12 +79,42 @@ func (s *StandAloneStorage) Stop() error {
 
 // 快照读
 func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, error) {
-
-	return nil, nil
+	if s.engine.Kv == nil {
+		return nil, errors.New("kv is nil")
+	}
+	
+	txn := s.engine.Kv.NewTransaction(false)
+	return &StandAloneStorageReader{txn: txn}, nil
 }
 
 // 写操作
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
+	if s.engine.Kv == nil {
+		return errors.New("kv is nil")
+	}
 
-	return nil
+	// 创建写事务
+	txn := s.engine.Kv.NewTransaction(true)
+	defer txn.Discard() // 失败的情况下回滚
+
+	for _, mod := range batch {
+		fullkey := engine_util.KeyWithCF(mod.Cf(), mod.Key())
+		switch mod.Data.(type) {
+		case storage.Put:
+			err := s.engine.Kv.Update(func(txn *badger.Txn) error {
+				return txn.Set(fullkey, mod.Value())
+			})
+			if err != nil {
+				return err
+			}
+		case storage.Delete:
+			err := s.engine.Kv.Update(func(txn *badger.Txn) error {
+				return txn.Delete(fullkey)
+			})
+			if err != nil {
+				return err
+			}
+		}
+	}
+	return txn.Commit()
 }
