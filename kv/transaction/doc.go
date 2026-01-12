@@ -1,40 +1,35 @@
 package transaction
 
-// The transaction package implements TinyKV's 'transaction' layer. This takes incoming requests from the kv/server/server.go
-// as input and turns them into reads and writes of the underlying key/value store (defined by Storage in kv/storage/storage.go).
-// The storage engine handles communicating with other nodes and writing data to disk. The transaction layer must
-// translate high-level TinyKV commands into low-level raw key/value commands and ensure that processing of commands do
-// not interfere with processing other commands.
+// transaction 包实现了 TinyKV 的“事务”层。它将来自 kv/server/server.go 的传入请求作为输入，
+// 并将其转化为底层键/值存储（由 kv/storage/storage.go 中的 Storage 定义）的读取和写入。
+// 存储引擎负责与其他节点通信并将数据写入磁盘。事务层必须将高级 TinyKV 命令转换为低级原始键/值命令，
+// 并确保命令的处理不会干扰其他命令的处理。
 //
-// Note that there are two kinds of transactions in play: TinySQL transactions are collaborative between TinyKV and its
-// client (e.g., TinySQL). They are implemented using multiple TinyKV requests and ensure that multiple SQL commands can
-// be executed atomically. There are also mvcc transactions which are an implementation detail of this
-// layer in TinyKV (represented by MvccTxn in kv/transaction/mvcc/transaction.go). These ensure that a *single* request
-// is executed atomically.
+// 请注意，这里有两种事务在起作用：TinySQL 事务是 TinyKV 与其客户端（例如 TinySQL）之间的协作。
+// 它们使用多个 TinyKV 请求实现，并确保可以原子地执行多个 SQL 命令。还有 mvcc 事务，
+// 这是 TinyKV 中此层的实现细节（由 kv/transaction/mvcc/transaction.go 中的 MvccTxn 表示）。
+// 这些确保 *单个* 请求被原子地执行。
 //
-// *Locks* are used to implement TinySQL transactions. Setting or checking a lock in a TinySQL transaction is lowered to
-// writing to the underlying store.
+// *Locks*（锁）用于实现 TinySQL 事务。在 TinySQL 事务中设置或检查锁被降低为写入底层存储。
 //
-// *Latches* are used to implement mvcc transactions and are not visible to the client. They are stored outside the
-// underlying storage (or equivalently, you can think of every key having its own latch). See the latches package for details.
+// *Latches*（门闩）用于实现 mvcc 事务，对客户端不可见。它们存储在底层存储之外
+// （或者等效地，你可以认为每个键都有自己的门闩）。有关详细信息，请参阅 latches 包。
 //
-// Within the `mvcc` package, `Lock` and `Write` provide abstractions for lowering locks and writes into simple keys and values.
+// 在 `mvcc` 包中，`Lock` and `Write` 提供了将锁和写入降低为简单键和值的抽象。
 //
-// ## Encoding user key/values
+// ## 编码用户键/值
 //
-// The mvcc strategy is essentially to store all data (committed and uncommitted) at every point in time. So for example, if we store
-// a value for a key, then store another value (a logical overwrite) at a later time, both values are preserved in the underlying
-// storage.
+// mvcc 策略本质上是在每个时间点存储所有数据（已提交和未提交）。
+// 因此，例如，如果我们存储一个键的值，稍后存储另一个值（逻辑覆盖），则这两个值都保留在底层存储中。
 //
-// This is implemented by encoding user keys with their timestamps (the starting timestamp of the transaction in which they are
-// written) to make an encoded key (see codec.go). The `default` CF is a mapping from encoded keys to their values.
+// 这是通过将用户键与其时间戳（写入它们的事务的开始时间戳）编码以生成编码键（请参阅 codec.go）来实现的。
+// `default` CF 是从编码键到其值的映射。
 //
-// Locking a key means writing into the `lock` CF. In this CF, we use the user key (i.e., not the encoded key so that a key is locked
-// for all timestamps). The value in the `lock` CF consists of the 'primary key' for the transaction, the kind of lock (for 'put',
-// 'delete', or 'rollback'), the start timestamp of the transaction, and the lock's ttl (time to live). See lock.go for the
-// implementation.
+// 锁定键意味着写入 `lock` CF。在此 CF 中，我们使用用户键（即，不是编码键，以便键在所有时间戳都被锁定）。
+// `lock` CF 中的值由事务的“主键”、锁的类型（用于 'put'、'delete' 或 'rollback'）、
+// 事务的开始时间戳和锁的 ttl（生存时间）组成。有关实现，请参阅 lock.go。
 //
-// The status of values is stored in the `write` CF. Here we map keys encoded with their commit timestamps (i.e., the time at which a
-// a transaction is committed) to a value containing the transaction's starting timestamp, and the kind of write ('put', 'delete', or
-// 'rollback'). Note that for transactions which are rolled back, the start timestamp is used for the commit timestamp in the encoded
-// key.
+// 值的状态存储在 `write` CF 中。在这里，我们将使用其提交时间戳（即事务提交的时间）编码的键映射到一个值，
+// 该值包含事务的开始时间戳和写入类型（'put'、'delete' 或 'rollback'）。
+// 请注意，对于回滚的事务，开始时间戳用于编码键中的提交时间戳。
+

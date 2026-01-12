@@ -28,6 +28,10 @@ var (
 	logLevel      = flag.String("loglevel", "", "the level of log")
 )
 
+// main 是程序的入口函数，负责初始化配置、日志、存储引擎和gRPC服务器。
+// 它会根据命令行参数覆盖默认配置，设置日志级别和格式，并根据配置选择使用Raft或独立存储引擎。
+// 函数会启动gRPC服务器并监听指定地址，处理传入请求直到程序终止。
+// 服务器支持优雅关闭，会捕获系统信号并妥善处理连接终止。
 func main() {
 	flag.Parse()
 	conf := config.NewDefaultConfig()
@@ -85,6 +89,9 @@ func main() {
 	log.Info("Server stopped.")
 }
 
+// handleSignal 监听系统信号并在收到终止信号时优雅地停止gRPC服务。
+// 监听的信号包括：SIGHUP, SIGINT, SIGTERM, SIGQUIT。
+// 当收到信号时，会记录日志并调用grpcServer.Stop()来停止服务。
 func handleSignal(grpcServer *grpc.Server) {
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh,

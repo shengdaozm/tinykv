@@ -29,14 +29,22 @@ func NewEngines(kvEngine, raftEngine *badger.DB, kvPath, raftPath string) *Engin
 	}
 }
 
+// WriteKV 将写批处理写入到KV引擎中
+// 参数:
+//   wb - 要写入的批处理对象
+// 返回:
+// WriteRaft 将写批处理应用到Raft引擎数据库
+//   写入过程中遇到的错误
 func (en *Engines) WriteKV(wb *WriteBatch) error {
 	return wb.WriteToDB(en.Kv)
 }
 
+// WriteRaft 将写批量操作应用到Raft引擎数据库
 func (en *Engines) WriteRaft(wb *WriteBatch) error {
 	return wb.WriteToDB(en.Raft)
 }
 
+// Close 关闭所有数据库连接，如果任一数据库关闭失败则返回错误
 func (en *Engines) Close() error {
 	dbs := []*badger.DB{en.Kv, en.Raft}
 	for _, db := range dbs {
@@ -50,6 +58,8 @@ func (en *Engines) Close() error {
 	return nil
 }
 
+// Destroy 关闭引擎并删除所有相关的数据文件
+// 返回操作过程中遇到的任何错误
 func (en *Engines) Destroy() error {
 	if err := en.Close(); err != nil {
 		return err
@@ -64,6 +74,10 @@ func (en *Engines) Destroy() error {
 }
 
 // CreateDB creates a new Badger DB on disk at path.
+// CreateDB 创建并返回一个配置好的BadgerDB实例
+// path: 数据库文件存储路径
+// raft: 是否为Raft引擎使用，为true时会优化配置
+// 返回: 初始化好的BadgerDB指针，出错时会直接终止程序
 func CreateDB(path string, raft bool) *badger.DB {
 	opts := badger.DefaultOptions
 	if raft {
