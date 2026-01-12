@@ -29,17 +29,10 @@ func NewEngines(kvEngine, raftEngine *badger.DB, kvPath, raftPath string) *Engin
 	}
 }
 
-// WriteKV 将写批处理写入到KV引擎中
-// 参数:
-//   wb - 要写入的批处理对象
-// 返回:
-// WriteRaft 将写批处理应用到Raft引擎数据库
-//   写入过程中遇到的错误
 func (en *Engines) WriteKV(wb *WriteBatch) error {
 	return wb.WriteToDB(en.Kv)
 }
 
-// WriteRaft 将写批量操作应用到Raft引擎数据库
 func (en *Engines) WriteRaft(wb *WriteBatch) error {
 	return wb.WriteToDB(en.Raft)
 }
