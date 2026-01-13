@@ -44,11 +44,11 @@ func newSnapRunner(snapManager *snap.SnapManager, config *config.Config, router 
 }
 
 func (r *snapRunner) Handle(t worker.Task) {
-	switch t.(type) {
+	switch t := t.(type) {
 	case *sendSnapTask:
-		r.send(t.(*sendSnapTask))
+		r.send(t)
 	case *recvSnapTask:
-		r.recv(t.(*recvSnapTask))
+		r.recv(t)
 	}
 }
 

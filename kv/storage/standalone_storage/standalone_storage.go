@@ -77,7 +77,6 @@ func (s *StandAloneStorage) Stop() error {
 	return s.engine.Close()
 }
 
-// 快照读
 func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader, error) {
 	if s.engine.Kv == nil {
 		return nil, errors.New("kv is nil")
@@ -87,15 +86,14 @@ func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader,
 	return &StandAloneStorageReader{txn: txn}, nil
 }
 
-// 写操作
 func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) error {
 	if s.engine.Kv == nil {
 		return errors.New("kv is nil")
 	}
 
-	// 创建写事务
+	// 创建写事务,失败的情况下回滚
 	txn := s.engine.Kv.NewTransaction(true)
-	defer txn.Discard() // 失败的情况下回滚
+	defer txn.Discard()
 
 	for _, mod := range batch {
 		fullkey := engine_util.KeyWithCF(mod.Cf(), mod.Key())
