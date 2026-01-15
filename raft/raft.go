@@ -17,6 +17,7 @@ package raft
 import (
 	"errors"
 
+	"github.com/pingcap-incubator/tinykv/kv/raftstore/message"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -81,6 +82,7 @@ type Config struct {
 	Applied uint64
 }
 
+// validate checks if the config is valid
 func (c *Config) validate() error {
 	if c.ID == None {
 		return errors.New("cannot use none as id")
@@ -108,10 +110,10 @@ type Progress struct {
 }
 
 type Raft struct {
-	id uint64
+	id uint64 // 节点id
 
-	Term uint64
-	Vote uint64
+	Term uint64 // 当前任期
+	Vote uint64 // 当前任期的给票的节点
 
 	// the log
 	RaftLog *RaftLog
@@ -164,37 +166,79 @@ func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
-	// Your Code Here (2A).
-	return nil
+	
+	// initialize the raft with configuration
+	r := &Raft{
+		id: c.ID,
+		Term: 0, // 初始为0
+		Vote: None,
+		RaftLog: newLog(c.Storage),
+		State: StateFollower, //等待leader的心跳
+		heartbeatTimeout: c.HeartbeatTick,
+		heartbeatElapsed: 0,
+		electionTimeout: c.ElectionTick,
+		electionElapsed: 0,
+	}
+	for _, peer := range c.peers {
+		r.Prs[peer] = &Progress{}
+		r.votes[peer] = false
+	}
+
+	return r
 }
 
 // sendAppend sends an append RPC with new entries (if any) and the
 // current commit index to the given peer. Returns true if a message was sent.
 func (r *Raft) sendAppend(to uint64) bool {
-	// Your Code Here (2A).
+
 	return false
 }
-
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
-	// Your Code Here (2A).
+	heartbeat_message := pb.Message{
+		MsgType: pb.MessageType_MsgHeartbeat,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+	}
+	
 }
-
 // tick advances the internal logical clock by a single tick.
+// 此处tick模拟的是逻辑心跳, 即调用tick()函数时, 逻辑心跳时间+1
 func (r *Raft) tick() {
-	// Your Code Here (2A).
+	switch r.State {
+	// leader 只关注心跳
+	case StateLeader:
+		r.heartbeatElapsed++
+		if r.heartbeatElapsed >= r.heartbeatTimeout {
+			r.heartbeatElapsed = 0
+			r.Step(pb.Message{From: r.id, To: None, MsgType: pb.MessageType_MsgBeat})
+		}
+	// follower 和 candidate 关注选举超时
+	case StateFollower, StateCandidate:
+		r.electionElapsed++
+		if r.electionElapsed >= r.electionTimeout {
+			r.electionElapsed = 0
+			r.becomeCandidate()
+			r.Step(pb.Message{From: r.id, To: None, MsgType: pb.MessageType_MsgHup})
+		}
+	}
 }
-
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
-	// Your Code Here (2A).
+	r.State = StateFollower
+	r.Term = term
+	r.Vote = 0
+	r.Lead = lead
+	r.electionElapsed = 0
+	r.heartbeatElapsed = 0
 }
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
-	// Your Code Here (2A).
+	r.State = StateCandidate
+	r.Term++
 }
-
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
 	// Your Code Here (2A).
@@ -220,9 +264,8 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
-	// Your Code Here (2A).
+	r.heartbeatElapsed = 0
 }
-
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
