@@ -179,6 +179,7 @@ func newRaft(c *Config) *Raft {
 		electionTimeout: c.ElectionTick,
 		electionElapsed: 0,
 	}
+
 	for _, peer := range c.peers {
 		r.Prs[peer] = &Progress{}
 		r.votes[peer] = false
