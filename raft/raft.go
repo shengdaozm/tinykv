@@ -17,7 +17,7 @@ package raft
 import (
 	"errors"
 
-	"github.com/pingcap-incubator/tinykv/kv/raftstore/message"
+	// "github.com/pingcap-incubator/tinykv/kv/raftstore/message"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -196,28 +196,29 @@ func (r *Raft) sendAppend(to uint64) bool {
 }
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
-	heartbeat_message := pb.Message{
-		MsgType: pb.MessageType_MsgHeartbeat,
-		From:    r.id,
-		To:      to,
-		Term:    r.Term,
-	}
+	// heartbeat_message := pb.Message{
+	// 	MsgType: pb.MessageType_MsgHeartbeat,
+	// 	From:    r.id,
+	// 	To:      to,
+	// 	Term:    r.Term,
+	// }
 	
 }
 // tick advances the internal logical clock by a single tick.
 // 此处tick模拟的是逻辑心跳, 即调用tick()函数时, 逻辑心跳时间+1
 func (r *Raft) tick() {
+	r.electionElapsed++
+	r.heartbeatElapsed++
+	
 	switch r.State {
 	// leader 只关注心跳
 	case StateLeader:
-		r.heartbeatElapsed++
 		if r.heartbeatElapsed >= r.heartbeatTimeout {
 			r.heartbeatElapsed = 0
 			r.Step(pb.Message{From: r.id, To: None, MsgType: pb.MessageType_MsgBeat})
 		}
 	// follower 和 candidate 关注选举超时
 	case StateFollower, StateCandidate:
-		r.electionElapsed++
 		if r.electionElapsed >= r.electionTimeout {
 			r.electionElapsed = 0
 			r.becomeCandidate()
