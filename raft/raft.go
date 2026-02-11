@@ -17,7 +17,6 @@ package raft
 import (
 	"errors"
 
-	// "github.com/pingcap-incubator/tinykv/kv/raftstore/message"
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
 
@@ -196,13 +195,13 @@ func (r *Raft) sendAppend(to uint64) bool {
 }
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
-	// heartbeat_message := pb.Message{
-	// 	MsgType: pb.MessageType_MsgHeartbeat,
-	// 	From:    r.id,
-	// 	To:      to,
-	// 	Term:    r.Term,
-	// }
-	
+	heartbeat_message := pb.Message{
+		MsgType: pb.MessageType_MsgHeartbeat,
+		From:    r.id,
+		To:      to,
+		Term:    r.Term,
+	}
+	r.msgs = append(r.msgs, heartbeat_message)
 }
 // tick advances the internal logical clock by a single tick.
 // 此处tick模拟的是逻辑心跳, 即调用tick()函数时, 逻辑心跳时间+1
@@ -238,8 +237,19 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
+	// 选举超时，任期加一
 	r.State = StateCandidate
 	r.Term++
+	// 发起选举，给自己投票
+	r.Vote = r.id
+	r.votes[r.id] = true
+
+	// 向集群的每个节点发起拉票选举
+	for id := range r.votes {
+		if id != r.id {
+			r.Step(pb.Message{From: r.id, To: id, MsgType: pb.MessageType_MsgRequestVote})
+		}
+	}
 }
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
@@ -250,11 +260,16 @@ func (r *Raft) becomeLeader() {
 // Step the entrance of handle message, see `MessageType`
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
-	// Your Code Here (2A).
-	switch r.State {
-	case StateFollower:
-	case StateCandidate:
-	case StateLeader:
+	switch m.MsgType {
+	case pb.MessageType_MsgHup:
+		
+		// 处理选举超时消息
+	case pb.MessageType_MsgRequestVote:
+		// 处理请求投票消息
+	case pb.MessageType_MsgRequestVoteResponse:
+		// 处理投票响应消息
+	default:
+		// 待定
 	}
 	return nil
 }
