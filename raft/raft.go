@@ -16,6 +16,7 @@ package raft
 
 import (
 	"errors"
+	"fmt"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -165,18 +166,20 @@ func newRaft(c *Config) *Raft {
 	if err := c.validate(); err != nil {
 		panic(err.Error())
 	}
-	
+
 	// initialize the raft with configuration
 	r := &Raft{
-		id: c.ID,
-		Term: 0, // 初始为0
-		Vote: None,
-		RaftLog: newLog(c.Storage),
-		State: StateFollower, //等待leader的心跳
+		id:               c.ID,
+		Term:             0, // 初始为0
+		Vote:             None,
+		RaftLog:          newLog(c.Storage),
+		Prs:              make(map[uint64]*Progress), // 初始化 Prs map
+		votes:            make(map[uint64]bool),      // 初始化 votes map
+		State:            StateFollower,              // 等待leader的心跳
 		heartbeatTimeout: c.HeartbeatTick,
 		heartbeatElapsed: 0,
-		electionTimeout: c.ElectionTick,
-		electionElapsed: 0,
+		electionTimeout:  c.ElectionTick,
+		electionElapsed:  0,
 	}
 
 	for _, peer := range c.peers {
@@ -193,6 +196,7 @@ func (r *Raft) sendAppend(to uint64) bool {
 
 	return false
 }
+
 // sendHeartbeat sends a heartbeat RPC to the given peer.
 func (r *Raft) sendHeartbeat(to uint64) {
 	heartbeat_message := pb.Message{
@@ -203,28 +207,34 @@ func (r *Raft) sendHeartbeat(to uint64) {
 	}
 	r.msgs = append(r.msgs, heartbeat_message)
 }
+
 // tick advances the internal logical clock by a single tick.
 // 此处tick模拟的是逻辑心跳, 即调用tick()函数时, 逻辑心跳时间+1
 func (r *Raft) tick() {
 	r.electionElapsed++
 	r.heartbeatElapsed++
-	
+
 	switch r.State {
 	// leader 只关注心跳
 	case StateLeader:
 		if r.heartbeatElapsed >= r.heartbeatTimeout {
 			r.heartbeatElapsed = 0
-			r.Step(pb.Message{From: r.id, To: None, MsgType: pb.MessageType_MsgBeat})
+			// 向所有fellower发送心跳信息
+			for id := range r.votes {
+				if id != r.id {
+					r.sendHeartbeat(id)
+				}
+			}
 		}
 	// follower 和 candidate 关注选举超时
 	case StateFollower, StateCandidate:
 		if r.electionElapsed >= r.electionTimeout {
-			r.electionElapsed = 0
 			r.becomeCandidate()
 			r.Step(pb.Message{From: r.id, To: None, MsgType: pb.MessageType_MsgHup})
 		}
 	}
 }
+
 // becomeFollower transform this peer's state to Follower
 func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.State = StateFollower
@@ -233,10 +243,16 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Lead = lead
 	r.electionElapsed = 0
 	r.heartbeatElapsed = 0
+	
+	// 清空投票
+	for id := range r.votes {
+		r.votes[id] = false
+	}
 }
 
 // becomeCandidate transform this peer's state to candidate
 func (r *Raft) becomeCandidate() {
+	r.electionElapsed = 0
 	// 选举超时，任期加一
 	r.State = StateCandidate
 	r.Term++
@@ -251,25 +267,88 @@ func (r *Raft) becomeCandidate() {
 		}
 	}
 }
+
 // becomeLeader transform this peer's state to leader
 func (r *Raft) becomeLeader() {
-	// Your Code Here (2A).
-	// NOTE: Leader should propose a noop entry on its term
+	// 设置状态
+	r.State = StateLeader
+	r.Lead = r.id
+
+	// 重置计时器
+	r.electionElapsed = 0
+	r.heartbeatElapsed = 0
+
+	// 初始化所有节点的进度
+	// 获取当前最后一个日志索引
+	lastIndex := r.RaftLog.LastIndex()
+	for id, pr := range r.Prs {
+		if id == r.id {
+			// Leader 的进度：Match 指向最后一条日志，Next 指向下一条待发送的日志
+			pr.Match = lastIndex
+			pr.Next = lastIndex + 1
+		} else {
+			// Follower 的进度：初始为 0，Next 从 lastIndex + 1 开始
+			pr.Match = 0
+			pr.Next = lastIndex + 1
+		}
+	}
+
+	// 5. 提议一个 no-op entry
+	// 这确保 leader 在其任期提交了至少一个条目，这是 Raft 的要求
+	// no-op entry 是一个空 entry（Data 为空），用于确认 leadership
+	r.Step(pb.Message{
+		From:    r.id,
+		MsgType: pb.MessageType_MsgPropose,
+		Entries: []*pb.Entry{{}},
+	})
 }
 
 // Step the entrance of handle message, see `MessageType`
 // on `eraftpb.proto` for what msgs should be handled
 func (r *Raft) Step(m pb.Message) error {
 	switch m.MsgType {
+	// 'MessageType_MsgHup' is a local message used for election. If an election timeout happened,
+	// the node should pass 'MessageType_MsgHup' to its Step method and start a new election.
 	case pb.MessageType_MsgHup:
+	 
+	// 'MessageType_MsgBeat' is a local message that signals the leader to send a heartbeat
+	// of the 'MessageType_MsgHeartbeat' type to its followers.
+	case pb.MessageType_MsgBeat:
 		
-		// 处理选举超时消息
+	// 'MessageType_MsgPropose' is a local message that proposes to append data to the leader's log entries.
+	case pb.MessageType_MsgPropose:
+
+	// 'MessageType_MsgAppend' contains log entries to replicate.
+	case pb.MessageType_MsgAppend:
+	
+	// 'MessageType_MsgAppendResponse' is response to log replication request('MessageType_MsgAppend').
+	case pb.MessageType_MsgAppendResponse:
+		r.handleAppendEntries(m)
+	// 'MessageType_MsgRequestVote' requests votes for election.
 	case pb.MessageType_MsgRequestVote:
-		// 处理请求投票消息
+	
+	// 'MessageType_MsgRequestVoteResponse' contains responses from voting request.
 	case pb.MessageType_MsgRequestVoteResponse:
-		// 处理投票响应消息
+	
+	// 'MessageType_MsgSnapshot' requests to install a snapshot message.
+	case pb.MessageType_MsgSnapshot:
+	
+	// 'MessageType_MsgHeartbeat' sends heartbeat from leader to its followers.
+	case pb.MessageType_MsgHeartbeat:
+		r.handleHeartbeat(m)
+
+	// 'MessageType_MsgHeartbeatResponse' is a response to 'MessageType_MsgHeartbeat'
+	case pb.MessageType_MsgHeartbeatResponse:
+		r.handleHeartbeat(m)
+	// 'MessageType_MsgTransferLeader' requests the leader to transfer its leadership.
+	case pb.MessageType_MsgTransferLeader:
+	
+	// 'MessageType_MsgTimeoutNow' send from the leader to the leadership transfer target, to let
+	// the transfer target timeout immediately and start a new election.
+	case pb.MessageType_MsgTimeoutNow:
+	
 	default:
-		// 待定
+		fmt.Println("Unknown message type")
 	}
 	return nil
 }
@@ -281,8 +360,26 @@ func (r *Raft) handleAppendEntries(m pb.Message) {
 
 // handleHeartbeat handle Heartbeat RPC request
 func (r *Raft) handleHeartbeat(m pb.Message) {
-	r.heartbeatElapsed = 0
+	switch r.State {
+	case StateLeader:
+		// leader
+		if r.Term < m.Term {
+			r.becomeFollower(m.Term, m.From)
+		}
+	case StateFollower:
+		// follower
+		if r.Term <= m.Term {
+			r.Term = m.Term
+			r.electionElapsed = 0
+		}
+	case StateCandidate:
+		// candidate
+		if r.Term <= m.Term {
+			r.becomeFollower(m.Term, m.From)
+		}
+	}
 }
+
 // handleSnapshot handle Snapshot RPC request
 func (r *Raft) handleSnapshot(m pb.Message) {
 	// Your Code Here (2C).
