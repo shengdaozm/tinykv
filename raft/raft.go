@@ -215,18 +215,11 @@ func (r *Raft) tick() {
 	r.heartbeatElapsed++
 
 	switch r.State {
-	// leader 只关注心跳
 	case StateLeader:
 		if r.heartbeatElapsed >= r.heartbeatTimeout {
 			r.heartbeatElapsed = 0
-			// 向所有fellower发送心跳信息
-			for id := range r.votes {
-				if id != r.id {
-					r.sendHeartbeat(id)
-				}
-			}
+			r.Step(pb.Message{From: r.id, To: None, MsgType: pb.MessageType_MsgBeat})
 		}
-	// follower 和 candidate 关注选举超时
 	case StateFollower, StateCandidate:
 		if r.electionElapsed >= r.electionTimeout {
 			r.becomeCandidate()
@@ -243,7 +236,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Lead = lead
 	r.electionElapsed = 0
 	r.heartbeatElapsed = 0
-	
+
 	// 清空投票
 	for id := range r.votes {
 		r.votes[id] = false
@@ -293,7 +286,7 @@ func (r *Raft) becomeLeader() {
 		}
 	}
 
-	// 5. 提议一个 no-op entry
+	// 提交no-op entry
 	// 这确保 leader 在其任期提交了至少一个条目，这是 Raft 的要求
 	// no-op entry 是一个空 entry（Data 为空），用于确认 leadership
 	r.Step(pb.Message{
@@ -310,43 +303,51 @@ func (r *Raft) Step(m pb.Message) error {
 	// 'MessageType_MsgHup' is a local message used for election. If an election timeout happened,
 	// the node should pass 'MessageType_MsgHup' to its Step method and start a new election.
 	case pb.MessageType_MsgHup:
-	 
+
 	// 'MessageType_MsgBeat' is a local message that signals the leader to send a heartbeat
 	// of the 'MessageType_MsgHeartbeat' type to its followers.
 	case pb.MessageType_MsgBeat:
-		
+		// leader send heartbeat to all followers
+		if r.State == StateLeader {
+			for id := range r.Prs {
+				if id != r.id {
+					r.sendHeartbeat(id)
+				}
+			}
+		}
 	// 'MessageType_MsgPropose' is a local message that proposes to append data to the leader's log entries.
 	case pb.MessageType_MsgPropose:
 
 	// 'MessageType_MsgAppend' contains log entries to replicate.
 	case pb.MessageType_MsgAppend:
-	
+
 	// 'MessageType_MsgAppendResponse' is response to log replication request('MessageType_MsgAppend').
 	case pb.MessageType_MsgAppendResponse:
 		r.handleAppendEntries(m)
 	// 'MessageType_MsgRequestVote' requests votes for election.
 	case pb.MessageType_MsgRequestVote:
-	
+
 	// 'MessageType_MsgRequestVoteResponse' contains responses from voting request.
 	case pb.MessageType_MsgRequestVoteResponse:
-	
+
 	// 'MessageType_MsgSnapshot' requests to install a snapshot message.
 	case pb.MessageType_MsgSnapshot:
-	
+
 	// 'MessageType_MsgHeartbeat' sends heartbeat from leader to its followers.
 	case pb.MessageType_MsgHeartbeat:
+		// fellower handle heart from leader
 		r.handleHeartbeat(m)
 
 	// 'MessageType_MsgHeartbeatResponse' is a response to 'MessageType_MsgHeartbeat'
 	case pb.MessageType_MsgHeartbeatResponse:
-		r.handleHeartbeat(m)
+		// leader handle reponse
 	// 'MessageType_MsgTransferLeader' requests the leader to transfer its leadership.
 	case pb.MessageType_MsgTransferLeader:
-	
+
 	// 'MessageType_MsgTimeoutNow' send from the leader to the leadership transfer target, to let
 	// the transfer target timeout immediately and start a new election.
 	case pb.MessageType_MsgTimeoutNow:
-	
+
 	default:
 		fmt.Println("Unknown message type")
 	}
