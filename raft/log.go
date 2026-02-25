@@ -18,9 +18,9 @@ import pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 
 // RaftLog manage the log entries, its struct look like:
 //
-//  snapshot/first.....applied....committed....stabled.....last
-//  --------|------------------------------------------------|
-//                            log entries
+//	snapshot/first.....applied....committed....stabled.....last
+//	--------|------------------------------------------------|
+//	                          log entries
 //
 // for simplify the RaftLog implement should manage all log entries
 // that not truncated
@@ -55,8 +55,27 @@ type RaftLog struct {
 // newLog returns log using the given storage. It recovers the log
 // to the state that it just commits and applies the latest snapshot.
 func newLog(storage Storage) *RaftLog {
-	// Your Code Here (2A).
-	return nil
+	// 从 storage 获取初始状态
+	hs, _, err := storage.InitialState()
+	if err != nil {
+		panic(err)
+	}
+
+	// 获取 storage 中的第一条日志索引，用于初始化 entries
+	firstIndex, err := storage.FirstIndex()
+	if err != nil {
+		panic(err)
+	}
+
+	l := &RaftLog{
+		storage:   storage,
+		committed: hs.Commit,
+		applied:   firstIndex - 1,
+		stabled:   firstIndex - 1,
+		entries:   make([]pb.Entry, 0),
+	}
+
+	return l
 }
 
 // We need to compact the log entries in some point of time like
@@ -70,30 +89,135 @@ func (l *RaftLog) maybeCompact() {
 // note, exclude any dummy entries from the return value.
 // note, this is one of the test stub functions you need to implement.
 func (l *RaftLog) allEntries() []pb.Entry {
-	// Your Code Here (2A).
-	return nil
+	ents := make([]pb.Entry, 0)
+
+	// 如果有 unstable entries，它们可能会覆盖 storage 中的部分条目
+	if len(l.entries) > 0 {
+		firstUnstableIndex := l.entries[0].Index
+
+		// 获取 storage 中在 unstable 之前的 entries
+		firstIndex, err := l.storage.FirstIndex()
+		if err != nil {
+			return l.entries
+		}
+		if firstUnstableIndex > firstIndex {
+			stableEnts, err := l.storage.Entries(firstIndex, firstUnstableIndex)
+			if err == nil {
+				ents = append(ents, stableEnts...)
+			}
+		}
+
+		// 添加 unstable entries（覆盖 storage 中相同 index 的条目）
+		ents = append(ents, l.entries...)
+	} else {
+		// 没有 unstable entries，直接获取 storage 中的所有条目
+		firstIndex, err := l.storage.FirstIndex()
+		if err != nil {
+			return nil
+		}
+		lastIndex, err := l.storage.LastIndex()
+		if err != nil {
+			return nil
+		}
+
+		if lastIndex >= firstIndex {
+			stableEnts, err := l.storage.Entries(firstIndex, lastIndex+1)
+			if err == nil {
+				ents = append(ents, stableEnts...)
+			}
+		}
+	}
+
+	return ents
 }
 
 // unstableEntries return all the unstable entries
 func (l *RaftLog) unstableEntries() []pb.Entry {
-	// Your Code Here (2A).
-	return nil
+	if len(l.entries) == 0 {
+		return make([]pb.Entry, 0)
+	}
+	ents := make([]pb.Entry, len(l.entries))
+	copy(ents, l.entries)
+	return ents
 }
 
 // nextEnts returns all the committed but not applied entries
 func (l *RaftLog) nextEnts() (ents []pb.Entry) {
-	// Your Code Here (2A).
-	return nil
+	if l.committed <= l.applied {
+		return nil
+	}
+
+	// 获取 (applied, committed] 范围内的 entries
+	// 需要考虑 entries 可能为空的情况
+	if len(l.entries) == 0 {
+		// 从 storage 获取
+		entries, err := l.storage.Entries(l.applied+1, l.committed+1)
+		if err != nil {
+			return nil
+		}
+		return entries
+	}
+
+	firstEntryIndex := l.entries[0].Index
+	lo := max(l.applied+1, firstEntryIndex)
+	hi := l.committed + 1
+
+	if lo >= hi {
+		return nil
+	}
+
+	offset := lo - firstEntryIndex
+	if int(offset) >= len(l.entries) {
+		return nil
+	}
+
+	endOffset := hi - firstEntryIndex
+	if int(endOffset) > len(l.entries) {
+		endOffset = uint64(len(l.entries))
+	}
+
+	return l.entries[offset:endOffset]
 }
 
 // LastIndex return the last index of the log entries
 func (l *RaftLog) LastIndex() uint64 {
-	// Your Code Here (2A).
-	return 0
+	// 优先从 entries 中获取
+	if len(l.entries) > 0 {
+		return l.entries[len(l.entries)-1].Index
+	}
+	// 从 storage 获取
+	index, err := l.storage.LastIndex()
+	if err != nil {
+		return 0
+	}
+	return index
+}
+
+// LastTerm return the term of the last log entry
+func (l *RaftLog) LastTerm() uint64 {
+	lastIndex := l.LastIndex()
+	if lastIndex == 0 {
+		return 0
+	}
+	term, err := l.Term(lastIndex)
+	if err != nil {
+		return 0
+	}
+	return term
 }
 
 // Term return the term of the entry in the given index
 func (l *RaftLog) Term(i uint64) (uint64, error) {
-	// Your Code Here (2A).
-	return 0, nil
+	// 检查 entries 中是否包含该索引
+	if len(l.entries) > 0 {
+		firstEntryIndex := l.entries[0].Index
+		if i >= firstEntryIndex {
+			offset := i - firstEntryIndex
+			if int(offset) < len(l.entries) {
+				return l.entries[offset].Term, nil
+			}
+		}
+	}
+	// 从 storage 获取
+	return l.storage.Term(i)
 }
