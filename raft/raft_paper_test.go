@@ -98,13 +98,13 @@ func TestLeaderBcastBeat2AA(t *testing.T) {
 		r.tick()
 	}
 
-	msgs := r.readMessages()
-	sort.Sort(messageSlice(msgs))
-	wmsgs := []pb.Message{
+	msgs := messageSlice(r.readMessages())
+	sort.Sort(msgs)
+	wmsgs := messageSlice{
 		{From: 1, To: 2, Term: 1, MsgType: pb.MessageType_MsgHeartbeat},
 		{From: 1, To: 3, Term: 1, MsgType: pb.MessageType_MsgHeartbeat},
 	}
-	if !reflect.DeepEqual(msgs, wmsgs) {
+	if !reflect.DeepEqual([]pb.Message(msgs), []pb.Message(wmsgs)) {
 		t.Errorf("msgs = %v, want %v", msgs, wmsgs)
 	}
 }
@@ -150,13 +150,13 @@ func testNonleaderStartElection(t *testing.T, state StateType) {
 	if !r.votes[r.id] {
 		t.Errorf("vote for self = false, want true")
 	}
-	msgs := r.readMessages()
-	sort.Sort(messageSlice(msgs))
-	wmsgs := []pb.Message{
+	msgs := messageSlice(r.readMessages())
+	sort.Sort(msgs)
+	wmsgs := messageSlice{
 		{From: 1, To: 2, Term: 2, MsgType: pb.MessageType_MsgRequestVote},
 		{From: 1, To: 3, Term: 2, MsgType: pb.MessageType_MsgRequestVote},
 	}
-	if !reflect.DeepEqual(msgs, wmsgs) {
+	if !reflect.DeepEqual([]pb.Message(msgs), []pb.Message(wmsgs)) {
 		t.Errorf("msgs = %v, want %v", msgs, wmsgs)
 	}
 }
@@ -227,11 +227,11 @@ func TestFollowerVote2AA(t *testing.T) {
 
 		r.Step(pb.Message{From: tt.nvote, To: 1, Term: 1, MsgType: pb.MessageType_MsgRequestVote})
 
-		msgs := r.readMessages()
-		wmsgs := []pb.Message{
+		msgs := messageSlice(r.readMessages())
+		wmsgs := messageSlice{
 			{From: 1, To: tt.nvote, Term: 1, MsgType: pb.MessageType_MsgRequestVoteResponse, Reject: tt.wreject},
 		}
-		if !reflect.DeepEqual(msgs, wmsgs) {
+		if !reflect.DeepEqual([]pb.Message(msgs), []pb.Message(wmsgs)) {
 			t.Errorf("#%d: msgs = %v, want %v", i, msgs, wmsgs)
 		}
 	}
@@ -377,16 +377,16 @@ func TestLeaderStartReplication2AB(t *testing.T) {
 	if g := r.RaftLog.committed; g != li {
 		t.Errorf("committed = %d, want %d", g, li)
 	}
-	msgs := r.readMessages()
-	sort.Sort(messageSlice(msgs))
+	msgs := messageSlice(r.readMessages())
+	sort.Sort(msgs)
 	ent := pb.Entry{Index: li + 1, Term: 1, Data: []byte("some data")}
 	wents := []pb.Entry{ent}
-	wmsgs := []pb.Message{
+	wmsgs := messageSlice{
 		{From: 1, To: 2, Term: 1, MsgType: pb.MessageType_MsgAppend, Index: li, LogTerm: 1, Entries: []*pb.Entry{&ent}, Commit: li},
 		{From: 1, To: 3, Term: 1, MsgType: pb.MessageType_MsgAppend, Index: li, LogTerm: 1, Entries: []*pb.Entry{&ent}, Commit: li},
 	}
-	if !reflect.DeepEqual(msgs, wmsgs) {
-		t.Errorf("msgs = %+v, want %+v", msgs, wmsgs)
+	if !reflect.DeepEqual([]pb.Message(msgs), []pb.Message(wmsgs)) {
+		t.Errorf("msgs = %v, want %v", msgs, wmsgs)
 	}
 	if g := r.RaftLog.unstableEntries(); !reflect.DeepEqual(g, wents) {
 		t.Errorf("ents = %+v, want %+v", g, wents)
@@ -420,8 +420,8 @@ func TestLeaderCommitEntry2AB(t *testing.T) {
 	if g := r.RaftLog.nextEnts(); !reflect.DeepEqual(g, wents) {
 		t.Errorf("nextEnts = %+v, want %+v", g, wents)
 	}
-	msgs := r.readMessages()
-	sort.Sort(messageSlice(msgs))
+	msgs := messageSlice(r.readMessages())
+	sort.Sort(msgs)
 	for i, m := range msgs {
 		if w := uint64(i + 2); m.To != w {
 			t.Errorf("to = %d, want %d", m.To, w)
@@ -776,8 +776,8 @@ func TestVoteRequest2AB(t *testing.T) {
 			r.tick()
 		}
 
-		msgs := r.readMessages()
-		sort.Sort(messageSlice(msgs))
+		msgs := messageSlice(r.readMessages())
+		sort.Sort(msgs)
 		if len(msgs) != 2 {
 			t.Fatalf("#%d: len(msg) = %d, want %d", j, len(msgs), 2)
 		}
@@ -881,11 +881,12 @@ func TestLeaderOnlyCommitsLogFromCurrentTerm2AB(t *testing.T) {
 	}
 }
 
-type messageSlice []pb.Message
+type messageSlice pb.MessageSlice
 
 func (s messageSlice) Len() int           { return len(s) }
 func (s messageSlice) Less(i, j int) bool { return fmt.Sprint(s[i]) < fmt.Sprint(s[j]) }
 func (s messageSlice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s messageSlice) String() string     { return pb.FormatMessageSlice(s) }
 
 func commitNoopEntry(r *Raft, s *MemoryStorage) {
 	if r.State != StateLeader {

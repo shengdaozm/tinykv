@@ -17,6 +17,7 @@ package raft
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 
 	pb "github.com/pingcap-incubator/tinykv/proto/pkg/eraftpb"
 )
@@ -137,6 +138,8 @@ type Raft struct {
 	heartbeatTimeout int
 	// baseline of election interval
 	electionTimeout int
+	// randomized election interval
+	randomizedElectionTimeout int
 	// number of ticks since it reached last heartbeatTimeout.
 	// only leader keeps heartbeatElapsed.
 	heartbeatElapsed int
@@ -181,9 +184,13 @@ func newRaft(c *Config) *Raft {
 		electionTimeout:  c.ElectionTick,
 		electionElapsed:  0,
 	}
+	r.resetRandomizedElectionTimeout()
 
 	for _, peer := range c.peers {
 		r.Prs[peer] = &Progress{}
+		if peer == c.ID {
+			continue
+		}
 		r.votes[peer] = false
 	}
 
@@ -279,8 +286,7 @@ func (r *Raft) tick() {
 	// follower 和 candidate 关注选举超时
 	// 只有超时的时候才会进行选举操作
 	case StateFollower, StateCandidate:
-		if r.electionElapsed >= r.electionTimeout {
-			r.becomeCandidate()
+		if r.electionElapsed >= r.randomizedElectionTimeout {
 			// 选举操作
 			for id := range r.votes {
 				r.votes[id] = false
@@ -299,6 +305,7 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 	r.Lead = lead
 	r.electionElapsed = 0
 	r.heartbeatElapsed = 0
+	r.resetRandomizedElectionTimeout()
 	r.resetVote()
 }
 
@@ -306,10 +313,11 @@ func (r *Raft) becomeFollower(term uint64, lead uint64) {
 func (r *Raft) becomeCandidate() {
 	r.electionElapsed = 0
 	r.heartbeatElapsed = 0
+	r.resetRandomizedElectionTimeout()
 
-	// 选举超时，任期加一
-	r.State = StateCandidate
 	r.Term++
+	r.State = StateCandidate
+	r.Vote = None
 }
 
 // becomeLeader transform this peer's state to leader
@@ -356,6 +364,9 @@ func (r *Raft) Step(m pb.Message) error {
 	// 'MessageType_MsgHup' is a local message used for election. If an election timeout happened,
 	// the node should pass 'MessageType_MsgHup' to its Step method and start a new election.
 	case pb.MessageType_MsgHup:
+		if r.State == StateLeader {
+			return nil
+		}
 		r.becomeCandidate()
 		r.Vote = r.id
 		r.votes = make(map[uint64]bool)
@@ -374,21 +385,44 @@ func (r *Raft) Step(m pb.Message) error {
 			}
 		}
 
-		if len(r.votes) > len(r.Prs)/2 {
+		needed := len(r.Prs)/2 + 1
+		if len(r.votes) >= needed {
 			r.becomeLeader()
 		}
 
 	// 'MessageType_MsgBeat' is a local message that signals the leader to send a heartbeat
 	// of the 'MessageType_MsgHeartbeat' type to its followers.
 	case pb.MessageType_MsgBeat:
-		for id := range r.Prs {
-			if id != r.id {
-				r.sendHeartbeat(id)
+		if r.State == StateLeader {
+			for id := range r.Prs {
+				if id != r.id {
+					r.sendHeartbeat(id)
+				}
 			}
 		}
 
 	// 'MessageType_MsgPropose' is a local message that proposes to append data to the leader's log entries.
 	case pb.MessageType_MsgPropose:
+		if r.State != StateLeader {
+			return ErrProposalDropped
+		}
+		if len(m.Entries) == 0 {
+			m.Entries = []*pb.Entry{{}}
+		}
+		lastIndex := r.RaftLog.LastIndex()
+		for i, ent := range m.Entries {
+			ent.Index = lastIndex + 1 + uint64(i)
+			ent.Term = r.Term
+			r.RaftLog.entries = append(r.RaftLog.entries, *ent)
+		}
+		r.Prs[r.id].Match = r.RaftLog.LastIndex()
+		r.Prs[r.id].Next = r.Prs[r.id].Match + 1
+		r.maybeCommit()
+		for id := range r.Prs {
+			if id != r.id {
+				r.sendAppend(id)
+			}
+		}
 
 	// 'MessageType_MsgAppend' contains log entries to replicate.
 	case pb.MessageType_MsgAppend:
@@ -612,7 +646,7 @@ func (r *Raft) maybeCommit() {
 		}
 
 		// 如果超过半数，更新 committed
-		if count > len(r.Prs)/2 {
+		if count >= (len(r.Prs)+1)/2 {
 			r.RaftLog.committed = index
 			break
 		}
@@ -623,17 +657,21 @@ func (r *Raft) maybeCommit() {
 func (r *Raft) handleRequestVote(m pb.Message) {
 	switch m.MsgType {
 	case pb.MessageType_MsgRequestVote:
-		// 处理投票请求
+		if m.Term > r.Term {
+			r.becomeFollower(m.Term, None)
+		}
 		Votemsg := pb.Message{From: r.id, To: m.From, Reject: false, Term: r.Term, MsgType: pb.MessageType_MsgRequestVoteResponse}
-		// 如果已经投票或者msg的term小，则拒绝投票
-		if r.Vote != None || m.Term < r.Term {
+		if (r.Vote != None && r.Vote != m.From) || m.Term < r.Term {
 			Votemsg.Reject = true
+		} else {
+			r.Vote = m.From
+			r.Lead = None
 		}
 		r.msgs = append(r.msgs, Votemsg)
 	case pb.MessageType_MsgRequestVoteResponse:
 		if !m.Reject {
 			r.votes[m.From] = true
-			if len(r.votes) > len(r.Prs)/2 {
+			if len(r.votes) >= len(r.Prs)/2+1 {
 				r.becomeLeader()
 			}
 		} else {
@@ -687,4 +725,14 @@ func (r *Raft) resetVote() {
 	for id := range r.votes {
 		r.votes[id] = false
 	}
+}
+
+// resetRandomizedElectionTimeout resets the election timeout to a randomized value
+// in the range [electionTimeout+1, 2*electionTimeout-1].
+func (r *Raft) resetRandomizedElectionTimeout() {
+	if r.electionTimeout <= 1 {
+		r.randomizedElectionTimeout = r.electionTimeout
+		return
+	}
+	r.randomizedElectionTimeout = r.electionTimeout + 1 + rand.Intn(r.electionTimeout-1)
 }

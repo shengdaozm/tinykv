@@ -136,8 +136,12 @@ func (l *RaftLog) unstableEntries() []pb.Entry {
 	if len(l.entries) == 0 {
 		return make([]pb.Entry, 0)
 	}
-	ents := make([]pb.Entry, len(l.entries))
-	copy(ents, l.entries)
+	var ents []pb.Entry
+	for _, e := range l.entries {
+		if e.Index > l.stabled {
+			ents = append(ents, e)
+		}
+	}
 	return ents
 }
 
@@ -147,11 +151,11 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 		return nil
 	}
 
-	// 获取 (applied, committed] 范围内的 entries
-	// 需要考虑 entries 可能为空的情况
+	lo := l.applied + 1
+	hi := l.committed + 1
+
 	if len(l.entries) == 0 {
-		// 从 storage 获取
-		entries, err := l.storage.Entries(l.applied+1, l.committed+1)
+		entries, err := l.storage.Entries(lo, hi)
 		if err != nil {
 			return nil
 		}
@@ -159,16 +163,22 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 	}
 
 	firstEntryIndex := l.entries[0].Index
-	lo := max(l.applied+1, firstEntryIndex)
-	hi := l.committed + 1
+
+	if lo < firstEntryIndex {
+		storageEntries, err := l.storage.Entries(lo, firstEntryIndex)
+		if err == nil {
+			ents = append(ents, storageEntries...)
+		}
+		lo = firstEntryIndex
+	}
 
 	if lo >= hi {
-		return nil
+		return ents
 	}
 
 	offset := lo - firstEntryIndex
 	if int(offset) >= len(l.entries) {
-		return nil
+		return ents
 	}
 
 	endOffset := hi - firstEntryIndex
@@ -176,7 +186,8 @@ func (l *RaftLog) nextEnts() (ents []pb.Entry) {
 		endOffset = uint64(len(l.entries))
 	}
 
-	return l.entries[offset:endOffset]
+	ents = append(ents, l.entries[offset:endOffset]...)
+	return ents
 }
 
 // LastIndex return the last index of the log entries

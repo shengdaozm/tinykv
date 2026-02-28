@@ -356,7 +356,7 @@ type Message struct {
 }
 
 func (m *Message) Reset()         { *m = Message{} }
-func (m *Message) String() string { return proto.CompactTextString(m) }
+func (m *Message) String() string { return FormatMessage(m) }
 func (*Message) ProtoMessage()    {}
 func (*Message) Descriptor() ([]byte, []int) {
 	return fileDescriptor_eraftpb_2f2e0bcef614736b, []int{3}
