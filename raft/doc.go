@@ -20,43 +20,43 @@ Raft 是一种协议，节点集群可以使用它来维护复制状态机。
 有关 Raft 的更多详细信息，请参阅 Diego Ongaro 和 John Ousterhout 撰写的“In Search of an Understandable Consensus Algorithm”
 (https://ramcloud.stanford.edu/raft.pdf)。
 
-Usage
+# Usage
 
 raft 中的主要对象是 Node。你可以使用 raft.StartNode 从头开始启动 Node，
 或者使用 raft.RestartNode 从某些初始状态启动 Node。
 
 从头开始启动节点：
 
-  storage := raft.NewMemoryStorage()
-  c := &Config{
-    ID:              0x01,
-    ElectionTick:    10,
-    HeartbeatTick:   1,
-    Storage:         storage,
-  }
-  n := raft.StartNode(c, []raft.Peer{{ID: 0x02}, {ID: 0x03}})
+	storage := raft.NewMemoryStorage()
+	c := &Config{
+	  ID:              0x01,
+	  ElectionTick:    10,
+	  HeartbeatTick:   1,
+	  Storage:         storage,
+	}
+	n := raft.StartNode(c, []raft.Peer{{ID: 0x02}, {ID: 0x03}})
 
 从之前的状态重启节点：
 
-  storage := raft.NewMemoryStorage()
+	storage := raft.NewMemoryStorage()
 
-  // recover the in-memory storage from persistent
-  // snapshot, state and entries.
-  storage.ApplySnapshot(snapshot)
-  storage.SetHardState(state)
-  storage.Append(entries)
+	// recover the in-memory storage from persistent
+	// snapshot, state and entries.
+	storage.ApplySnapshot(snapshot)
+	storage.SetHardState(state)
+	storage.Append(entries)
 
-  c := &Config{
-    ID:              0x01,
-    ElectionTick:    10,
-    HeartbeatTick:   1,
-    Storage:         storage,
-    MaxInflightMsgs: 256,
-  }
+	c := &Config{
+	  ID:              0x01,
+	  ElectionTick:    10,
+	  HeartbeatTick:   1,
+	  Storage:         storage,
+	  MaxInflightMsgs: 256,
+	}
 
-  // restart raft without peer information.
-  // peer information is already included in the storage.
-  n := raft.RestartNode(c)
+	// restart raft without peer information.
+	// peer information is already included in the storage.
+	n := raft.RestartNode(c)
 
 既然你持有了一个 Node，你就有了几个职责：
 
@@ -96,29 +96,29 @@ Raft 有两个重要的超时：心跳和选举超时。但是，在 raft 包内
 
 The total state machine handling loop will look something like this:
 
-  for {
-    select {
-    case <-s.Ticker:
-      n.Tick()
-    case rd := <-s.Node.Ready():
-      saveToStorage(rd.State, rd.Entries, rd.Snapshot)
-      send(rd.Messages)
-      if !raft.IsEmptySnap(rd.Snapshot) {
-        processSnapshot(rd.Snapshot)
-      }
-      for _, entry := range rd.CommittedEntries {
-        process(entry)
-        if entry.Type == eraftpb.EntryType_EntryConfChange {
-          var cc eraftpb.ConfChange
-          cc.Unmarshal(entry.Data)
-          s.Node.ApplyConfChange(cc)
-        }
-      }
-      s.Node.Advance()
-    case <-s.done:
-      return
-    }
-  }
+	for {
+	  select {
+	  case <-s.Ticker:
+	    n.Tick()
+	  case rd := <-s.Node.Ready():
+	    saveToStorage(rd.State, rd.Entries, rd.Snapshot)
+	    send(rd.Messages)
+	    if !raft.IsEmptySnap(rd.Snapshot) {
+	      processSnapshot(rd.Snapshot)
+	    }
+	    for _, entry := range rd.CommittedEntries {
+	      process(entry)
+	      if entry.Type == eraftpb.EntryType_EntryConfChange {
+	        var cc eraftpb.ConfChange
+	        cc.Unmarshal(entry.Data)
+	        s.Node.ApplyConfChange(cc)
+	      }
+	    }
+	    s.Node.Advance()
+	  case <-s.done:
+	    return
+	  }
+	}
 
 要从你的节点提议对状态机的更改，请获取你的应用程序数据，将其序列化为字节切片并调用：
 
@@ -142,7 +142,7 @@ To add or remove a node in a cluster, build ConfChange struct 'cc' and call:
 即使旧节点已被删除，给定的 ID 也必须仅使用一次。
 这意味着，例如 IP 地址不适合作为节点 ID，因为它们可能会被重复使用。节点 ID 必须非零。
 
-Implementation notes
+# Implementation notes
 
 此实现与最终的 Raft 论文 (https://ramcloud.stanford.edu/~ongaro/thesis.pdf) 保持最新，
 尽管我们对成员变更协议的实现与第 4 章中描述的有所不同。
@@ -158,7 +158,7 @@ Implementation notes
 则无法再删除该成员，因为集群无法取得进展。
 因此，强烈建议在每个集群中使用三个或更多节点。
 
-MessageType
+# MessageType
 
 Package raft 以 Protocol Buffer 格式（在 eraftpb 包中定义）发送和接收消息。
 每个状态（follower, candidate, leader）在推进给定的 eraftpb.Message 时实现其自己的 'step' 方法
@@ -218,6 +218,5 @@ Package raft 以 Protocol Buffer 格式（在 eraftpb 包中定义）发送和�
 
 	'MessageType_MsgHeartbeatResponse' 是对 'MessageType_MsgHeartbeat' 的响应。
 	当 'MessageType_MsgHeartbeatResponse' 传递给 leader 的 Step 方法时，leader 知道哪个 follower 进行了响应。
-
 */
 package raft

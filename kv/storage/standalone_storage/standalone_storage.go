@@ -21,8 +21,8 @@ type StandAloneStorageReader struct {
 	txn *badger.Txn // 用于读取数据的事务，由Reader方法传入
 }
 
-func (r *StandAloneStorageReader)GetCF(cf string, key []byte) ([]byte, error) {
-	if r.txn ==nil {
+func (r *StandAloneStorageReader) GetCF(cf string, key []byte) ([]byte, error) {
+	if r.txn == nil {
 		return nil, errors.New("transaction is nil")
 	}
 	val, err := engine_util.GetCFFromTxn(r.txn, cf, key)
@@ -41,7 +41,7 @@ func (r *StandAloneStorageReader) IterCF(cf string) engine_util.DBIterator {
 	if r.txn == nil {
 		return nil
 	}
-	
+
 	iter := engine_util.NewCFIterator(cf, r.txn)
 	return iter
 }
@@ -81,7 +81,7 @@ func (s *StandAloneStorage) Reader(ctx *kvrpcpb.Context) (storage.StorageReader,
 	if s.engine.Kv == nil {
 		return nil, errors.New("kv is nil")
 	}
-	
+
 	txn := s.engine.Kv.NewTransaction(false)
 	return &StandAloneStorageReader{txn: txn}, nil
 }
