@@ -16,6 +16,7 @@ func (server *Server) RawGet(_ context.Context, req *kvrpcpb.RawGetRequest) (*kv
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
 
 	val, err := reader.GetCF(req.Cf, req.Key)
 	if val == nil {
@@ -65,7 +66,10 @@ func (server *Server) RawScan(_ context.Context, req *kvrpcpb.RawScanRequest) (*
 	if err != nil {
 		return nil, err
 	}
+	defer reader.Close()
+
 	iter := reader.IterCF(req.Cf)
+	defer iter.Close()
 	iter.Seek(req.StartKey)
 	kvPairs := make([]*kvrpcpb.KvPair, 0)
 	for i := 0; i < int(req.Limit) && iter.Valid(); i++ {

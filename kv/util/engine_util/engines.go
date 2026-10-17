@@ -66,7 +66,6 @@ func (en *Engines) Destroy() error {
 	return nil
 }
 
-// CreateDB creates a new Badger DB on disk at path.
 // CreateDB 创建并返回一个配置好的BadgerDB实例
 // path: 数据库文件存储路径
 // raft: 是否为Raft引擎使用，为true时会优化配置

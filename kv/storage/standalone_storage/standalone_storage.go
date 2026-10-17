@@ -91,7 +91,7 @@ func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) 
 		return errors.New("kv is nil")
 	}
 
-	// 创建写事务,失败的情况下回滚
+	// 创建写事务，把整个 batch 攒在这一个事务里，最后原子提交
 	txn := s.engine.Kv.NewTransaction(true)
 	defer txn.Discard()
 
@@ -99,17 +99,11 @@ func (s *StandAloneStorage) Write(ctx *kvrpcpb.Context, batch []storage.Modify) 
 		fullkey := engine_util.KeyWithCF(mod.Cf(), mod.Key())
 		switch mod.Data.(type) {
 		case storage.Put:
-			err := s.engine.Kv.Update(func(txn *badger.Txn) error {
-				return txn.Set(fullkey, mod.Value())
-			})
-			if err != nil {
+			if err := txn.Set(fullkey, mod.Value()); err != nil {
 				return err
 			}
 		case storage.Delete:
-			err := s.engine.Kv.Update(func(txn *badger.Txn) error {
-				return txn.Delete(fullkey)
-			})
-			if err != nil {
+			if err := txn.Delete(fullkey); err != nil {
 				return err
 			}
 		}
